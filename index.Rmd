@@ -1,0 +1,141 @@
+---
+title: "Predicting barbell curl form"
+author: "Ryan Badiee"
+date: "5/23/2020"
+output: html_document
+---
+## Summary
+
+The purpose of this project was to use accelerometer data in order to predict the form of barbell curl performed by a subject. The training data was split into training and validation data. Then, variables were removed that (1) exhibited near 0 variability, (2) had over 90% missing observations, or (3) were irrelevant, such as time point that an observation was captured. Then, four models were developed, a random forest, a boosted model, and a linear discriminant analysis model, in addition to a stacked model of the three. Cross validation demonstrated that the random forest had the highest degree of accuracy at 95.8% and it was used to predict the testing data.
+
+## Cleaning the data
+
+Data was first downloaded and split into training and validation data:
+```{r, cache=TRUE, results="hide"}
+#Download training/testing sets
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+               "./trainingset.csv")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+              "./testingset.csv")
+trainingset <- read.csv("./trainingset.csv")
+testing <- read.csv("./testingset.csv")
+
+
+#Make training vs validation set
+library(caret)
+inTrain <- createDataPartition(y=trainingset$classe,p=0.75,list=F)
+training <- trainingset[inTrain,]
+validation <- trainingset[-inTrain,]
+```
+
+Then, variables with near zero variability were removed from both the training and validation set:
+
+```{r}
+#First, start by removing covariates with nearly no variability for simplicity
+library(caret)
+nsv <- nearZeroVar(training, saveMetrics = T)
+library(dplyr)
+nsv <- subset(nsv, nsv$nzv==TRUE)
+nsv
+training <- training[ , !(names(training) %in% row.names(nsv))]
+validation <- validation[,!(names(validation) %in% row.names(nsv))]
+```
+
+Variables with a significant number of NAs, over 90% were also removed in order to reduce bias.
+
+```{r}
+#Next, identify variables with many NAs and remove from data set
+totalnas <- sapply(training, function(x) sum(is.na(x)))
+propnas <- totalnas/nrow(training)
+propnas <- propnas[which(propnas>0.9)] #If over 90% NAs, remove from data
+toomanynas <- names(propnas)
+toomanynas
+training <- training[ , !(names(training) %in% toomanynas)]
+validation <- validation[,!(names(validation) %in% toomanynas)]
+```
+
+Finally, variables such as user name and time point were removed as they were irrelevant to the accelerometer data.
+```{r}
+#Finally, remove variables a priori if not relevant, i.e. timepoint
+training <- training[,-(1:5)]
+validation <- validation[,-(1:5)]
+dim(training)
+```
+
+This left me with 53 predictive variables to choose from.
+
+## Creating and validating models
+
+Using k nearest neighbors, the remaining missing observations were imputed to both the training and validation data sets.
+
+```{r}
+#Impute missing data to improve performance
+Itraining <- preProcess(training[,-54],method="knnImpute")
+Itraining <- data.frame(Itraining$data,training$classe)
+Ivalidation <- preProcess(validation[,-54],method="knnImpute")
+Ivalidation <- data.frame(Ivalidation$data,validation$classe)
+```
+
+Three models were created and compared: random forest, a boosting model, and linear discriminant analysis. To speed performance, the parallel package was used to process multiple random forest models in parallel: 
+```{r, cache=TRUE, results="hide"}
+#Generate boosted model:
+boomod <- train(training.classe~.,data=Itraining,method="gbm")
+checkboo <- predict(boomod,Ivalidation)
+booacc <- confusionMatrix(Ivalidation$validation.classe, checkboo)
+```
+
+```{r,cache=TRUE}
+
+#Generate random forest model:
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1)
+registerDoParallel(cluster)
+rfmodControl <- trainControl(method = "cv",
+                        number = 5,
+                        allowParallel = TRUE)
+rfmod <- train(training.classe~.,data=Itraining,method="rf", metric="Accuracy", maximize=TRUE)
+stopCluster(cluster)
+registerDoSEQ()
+checkrf <- predict(rfmod,Ivalidation)
+rfacc <- confusionMatrix(Ivalidation$validation.classe,checkrf)
+```
+```{r, cache=TRUE}
+#Generate linear discriminant analysis model:
+ldamod <- train(training.classe~.,data=Itraining,method="lda")
+checklda <- predict(ldamod,Ivalidation)
+ldaacc <- confusionMatrix(Ivalidation$validation.classe,checklda)
+```
+
+Then, a stacked model incorporating predictions from these three was created:
+```{r, warning=FALSE}
+#Stack models:
+predDF <- data.frame(checkboo, checkrf, 
+                     classe = Ivalidation$validation.classe)
+combmod <- train(classe ~ ., data=predDF, method="gam")
+checkcomb <- predict(combmod,predDF)
+combacc <- confusionMatrix(Ivalidation$validation.classe, checkcomb)
+```
+
+The accuracy of these models was assessed using the validation data set. Of the four, the random forest model proved to be the most accurate, with 97.2% of its predictions correct. Thus, the expected out of sample error is calculated to be 2.8%. 
+
+```{r}
+booacc
+rfacc
+ldaacc
+combacc
+```
+
+## Final prediction
+
+As is demonstrated below, the same data processing and prediction operations were performed on the testing set, and the random forest model was used for prediction. The final prediction values are not shown (given that the quiz is a separate assignment, I want to maintain the integrity of the answers), but it achieved an accuracy of 80% on the test set.
+
+```{r}
+#Predict testing data:
+testing <- testing[ , !(names(testing) %in% row.names(nsv))]
+testing <- testing[ , !(names(testing) %in% toomanynas)]
+testing <- testing[,-(1:5)]
+Itesting <- preProcess(testing[,-54],method="knnImpute")
+Itesting <- data.frame(Itesting$data,testing$problem_id)
+testrf <- predict(rfmod,Itesting)
+```
