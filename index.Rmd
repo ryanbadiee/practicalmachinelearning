@@ -117,7 +117,7 @@ checkcomb <- predict(combmod,predDF)
 combacc <- confusionMatrix(Ivalidation$validation.classe, checkcomb)
 ```
 
-The accuracy of these models was assessed using the validation data set. Of the four, the random forest model proved to be the most accurate, with 97.2% of its predictions correct. Thus, the expected out of sample error is calculated to be 2.8%. 
+The accuracy of these models was assessed using the validation data set. Of the four, the random forest model proved to be the most accurate, with 96.5% of its predictions correct. Thus, the expected out of sample error is calculated to be 3.5%. 
 
 ```{r}
 booacc
